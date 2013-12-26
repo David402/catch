@@ -16,13 +16,14 @@ configure :production do
   #       from ENV['DATABASE_URI'] (see /env route below)
 end
 
-# Quick test
 get '/' do
   "Congradulations!
    You're running a Sinatra application on Heroku!"
 end
 
-# Test at <appname>.heroku.com
+get '/webrtc' do
+	erb :webrtc
+end
 
 # You can see all your app specific information this way.
 # IMPORTANT! This is a very bad thing to do for a production

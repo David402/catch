@@ -5,7 +5,7 @@ $stdout.sync = true
 # 
 # http://stackoverflow.com/questions/2900370/why-does-ruby-1-9-2-remove-from-load-path-and-whats-the-alternative
 # 
-require './heroku-sinatra-app'
+require './main'
 
 ## There is no need to set directories here anymore;
 ## Just run the application

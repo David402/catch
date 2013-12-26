@@ -1,0 +1,259 @@
+<html>
+<head>
+	<title>WebRTC</title>
+	
+	<script src="static/lib/util.js"></script>
+	
+	<style>
+	video {
+		 
+	}
+	
+	.remote-video {
+	  transform: rotateY(180deg);
+      -webkit-transform:rotateY(180deg);
+      -moz-transform:rotateY(180deg);
+    }
+	</style>
+</head>
+<body>
+	<h1>Hello World</h1>
+	<video id="localvideo"></video>
+
+<script type="text/javascript">
+
+if (navigator.mozGetUserMedia) {
+  navigator.getUserMedia = navigator.mozGetUserMedia;
+  RTCPeerConnection = mozRTCPeerConnection;
+  RTCSessionDescription = mozRTCSessionDescription;
+  RTCIceCandidate = mozRTCIceCandidate;
+} else {
+  navigator.getUserMedia = navigator.webkitGetUserMedia;
+  RTCPeerConnection = webkitRTCPeerConnection;
+}
+
+var controllerData = {"Room":"rncLompg"};
+console.log("controllerData", controllerData);
+var room = controllerData["Room"];
+
+function sendSignal(destinations, message) {
+  var body = JSON.stringify(message);
+  var data = {"destinations": destinations, "body": body}
+  console.log('C->S: ', data);
+
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/webrtc/signal/transmitter', true);
+  xhr.send(JSON.stringify(data));
+}
+
+var g_RTCPeerConnections = {};
+function preparePeerConnection(myToken, token, onaddstream) {
+  var pc_config = {"iceServers": [{"url": "stun:stun.l.google.com:19302"}]};
+  var onicecandidate = function(evt) {
+    if (!evt.candidate){
+      return;
+    } 
+    var msg = {"from": myToken,
+               "type": "icecandidate",
+               "candidate": evt.candidate.candidate,
+               "sdpMLineIndex": evt.candidate.sdpMLineIndex,
+               "sdpMid": evt.candidate.sdpMid};
+    sendSignal([token], msg);
+  };
+  
+  
+  var constraints = {"optional": [{"DtlsSrtpKeyAgreement": true}]}; 
+  var pc = new RTCPeerConnection(pc_config, constraints);
+  pc.onicecandidate = onicecandidate;
+  pc.onaddstream = function(evt){ onaddstream(token, evt); };
+  g_RTCPeerConnections[token] = pc;
+  return pc;
+}
+
+
+function rtcSignalHandler(localMediaStream, myToken, evt) {
+  var msg = JSON.parse(evt.data);
+  console.log(msg);
+  var pc = g_RTCPeerConnections[msg.from];
+    
+  if (msg.type == "offer") {
+    if (!pc) {
+      pc = preparePeerConnection(myToken, msg.from, onAddRemoteStream);
+      if (localMediaStream) { pc.addStream(localMediaStream); }
+    }
+    pc.setRemoteDescription(new RTCSessionDescription(msg.sessionDescription));
+    var answerSuccessCallback = function(sessionDescription) {
+      pc.setLocalDescription(sessionDescription,
+                             function(evt){},
+                             function(err){ console.log(err); });
+      var answerMsg = {"from": myToken,
+                       "type": "answer",
+                       "sessionDescription": sessionDescription};
+      sendSignal([msg.from], answerMsg);
+    };
+    pc.createAnswer(answerSuccessCallback,
+                    function(err){ console.log(err); });
+                      
+  } else if (msg.type == "answer") {
+    if (!pc) { return; }
+    pc.setRemoteDescription(new RTCSessionDescription(msg.sessionDescription));
+      
+  } else if (msg.type == "icecandidate") {
+    if (!pc) { return; }
+    var candidate = new RTCIceCandidate({"candidate": msg.candidate,
+                                         "sdpMLineIndex": msg.sdpMLineIndex});
+    pc.addIceCandidate(candidate);
+      
+  } else if (msg.type == "bye") {
+    
+    
+    onRemoteHangup(msg.from);
+  } else {
+    console.log("Unknown message: ", msg);
+  }
+}
+
+
+function createSignalChannel(callback) {
+  var source = new EventSource("/webrtc/signal/source");
+  var myTokenListener = function(evt) {
+    var msg = JSON.parse(evt.data);
+    console.log(msg);
+    
+    if (msg.type == "token") {
+      var myToken = msg.token;
+      callback(source, myToken);
+      source.removeEventListener("message", myTokenListener, false);
+      console.log("my token: ", myToken);
+      
+    } else {
+      console.log("Unknown message: ", msg);
+    }
+  }
+  source.addEventListener("message", myTokenListener, false);
+  return source;
+}
+
+
+function playVideo(video) {
+  setTimeout(function(){ video.play() }, 1000);
+}
+
+
+function getLocalMedia(callback) {
+  mediaConstraints = {video: true, audio: true};
+
+  function getUserMediaSuccess(localMediaStream) {
+    window.localMediaStream = localMediaStream;
+    var video = document.querySelector("#localvideo");
+    video.muted = true; 
+    video.src = window.URL.createObjectURL(localMediaStream);
+    playVideo(video);
+    
+    callback(localMediaStream);
+  }
+  function getUserMediaError(error){
+    console.log("navigator.getUserMedia error: ", error);
+    callback(null);
+  }
+  navigator.getUserMedia(mediaConstraints, getUserMediaSuccess, getUserMediaError);
+}
+
+function genVideoId(token) {
+  return "video-" + token;
+}
+
+
+function onAddRemoteStream(token, evt){
+  var remotevideo = document.createElement("video");
+  remotevideo.id = genVideoId(token);
+  remotevideo.src = URL.createObjectURL(evt.stream);
+  playVideo(remotevideo);
+  
+  remotevideo.style.width = "50%";
+  remotevideo.classList.add("remote-video")
+  
+  localvideo = document.querySelector("#localvideo");
+  localvideo.parentNode.insertBefore(remotevideo, localvideo);
+};
+
+function onRemoteHangup(token) {
+  var remotevideo = document.querySelector("#" + genVideoId(token));
+  if (remotevideo) {
+    remotevideo.parentNode.removeChild(remotevideo);
+  }
+  
+  if (g_RTCPeerConnections[token]) {
+    g_RTCPeerConnections[token].close();
+    delete g_RTCPeerConnections[token];
+  }
+}
+
+function joinRoom(myToken, room, callback) {
+  postHTTP("webrtc/join", {"token": myToken, "room": room}, function(req){
+  	if (req.readyState != 4) { return; }
+  	if (req.status != 200){ console.log("Join room failed", req); return; }
+  	
+  	var data = JSON.parse(req.responseText);
+  	var members = [];
+  	for (var member in data["members"]) {
+  	  if (member == myToken){ continue; }
+  	  members.push(member);
+  	}
+  	callback(members);
+  });
+}
+
+getLocalMedia(function(localMediaStream){
+createSignalChannel(function(source, myToken) {
+joinRoom(myToken, room, function(members){
+  for (var i = 0; i != members.length; i++) {
+    var token = members[i];
+    preparePeerConnection(myToken, token, onAddRemoteStream);
+  }
+
+  source.addEventListener("message", function(evt){
+    rtcSignalHandler(localMediaStream, myToken, evt);
+  });
+  
+  for (var i = 0; i != members.length; i++) {     
+    (function(i_){       
+      var token = members[i_];
+      var pc = g_RTCPeerConnections[token];
+      
+      if (localMediaStream) { pc.addStream(localMediaStream); }
+      var offerSuccessCallback = function(sessionDescription) {
+        pc.setLocalDescription(sessionDescription,
+                               function(evt){},
+                               function(err){ console.log(err); });
+        var msg = {"from": myToken,
+                   "type": "offer",
+                   "sessionDescription": sessionDescription};
+        sendSignal([token], msg);
+      };
+      var sdpc = {"mandatory": {
+                    "OfferToReceiveAudio":true,
+                    "OfferToReceiveVideo":true }};
+      pc.createOffer(offerSuccessCallback,
+                     function(err){ console.log(err); },
+                     sdpc 
+                     );        
+    })(i);
+  }
+  
+  window.onbeforeunload = function(e){
+    postHTTP("/webrtc/signal/leave_source",
+             {"token": myToken},
+             function(data){ console.log(data); },
+             false 
+             );
+  };
+    
+}); 
+}); 
+}); 
+
+</script>
+
+</body>
+</html>
