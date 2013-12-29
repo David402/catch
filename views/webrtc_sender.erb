@@ -1,0 +1,206 @@
+<html>
+<head>
+	<title>WebRTC</title>
+	
+	<script src="/utils.js"></script>
+	
+	<style>
+	video {
+		 
+	}
+	
+	.remote-video {
+	  transform: rotateY(180deg);
+      -webkit-transform:rotateY(180deg);
+      -moz-transform:rotateY(180deg);
+    }
+	</style>
+</head>
+<body>
+	<h1>Hello World</h1>
+	<video id="localvideo"></video>
+
+<script type="text/javascript">
+
+if (navigator.mozGetUserMedia) {
+  navigator.getUserMedia = navigator.mozGetUserMedia;
+  RTCPeerConnection = mozRTCPeerConnection;
+  RTCSessionDescription = mozRTCSessionDescription;
+  RTCIceCandidate = mozRTCIceCandidate;
+} else {
+  navigator.getUserMedia = navigator.webkitGetUserMedia;
+  RTCPeerConnection = webkitRTCPeerConnection;
+}
+
+var myToken = "1234";
+var controllerData = {"Room":"rncLompg"};
+console.log("controllerData", controllerData);
+var room = controllerData["Room"];
+
+// David, send signal/message to server
+//
+function sendSignal(destinations, message) {
+  var body = JSON.stringify(message);
+  var data = {"destinations": destinations, "body": body}
+  console.log('C->S: ', data);
+
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/webrtc/signal/transmitter', true);
+  xhr.send(JSON.stringify(data));
+}
+
+function onAddRemoteStream(token, evt){
+};
+
+// David, main RTC handler for all RTC events
+//
+function rtcSignalHandler(localMediaStream, myToken, evt) {
+  var msg = JSON.parse(evt.data);
+  console.log(msg);
+  var pc = g_RTCPeerConnections[msg.from];
+
+  console.log("msg.type: ", msg.type);
+  console.log("msg.from: ", msg.from);
+  console.log("peer connection: ", pc);
+  
+  // Remote clients request "offer" to get video, try to get RTCPeerConnection
+  // from hash or create one for it. And, add local stream to (remote)
+  // RTCPeerConnection to 'stream' local video to remote client.
+  //
+  if (msg.type == "offer") {
+
+    if (!pc) {
+      pc = preparePeerConnection(myToken, msg.from, onAddRemoteStream);
+      if (localMediaStream) { pc.addStream(localMediaStream); }
+    }
+    // ?????
+    pc.setRemoteDescription(new RTCSessionDescription(msg.sessionDescription));
+    var answerSuccessCallback = function(sessionDescription) {
+      pc.setLocalDescription(sessionDescription,
+                             function(evt){},
+                             function(err){ console.log(err); });
+      var answerMsg = {"from": myToken,
+                       "type": "answer",
+                       "sessionDescription": sessionDescription};
+      sendSignal([msg.from], answerMsg);
+    };
+    pc.createAnswer(answerSuccessCallback,
+                    function(err){ console.log(err); });   
+
+  } else if (msg.type == "icecandidate") {
+
+    if (!pc) { return; }
+    var candidate = new RTCIceCandidate({"candidate": msg.candidate,
+                                         "sdpMLineIndex": msg.sdpMLineIndex});
+    pc.addIceCandidate(candidate);
+      
+  } else if (msg.type == "bye") {
+    
+    onRemoteHangup(msg.from);
+
+  } else {
+
+    console.log("Unknown message: ", msg);
+
+  }
+}
+
+// Send RTC event to notify remote clients about `remote stream added`
+//
+var g_RTCPeerConnections = {};
+
+function newRTCPeerConnection() {
+  var pc_config = {"iceServers": [{"url": "stun:stun.l.google.com:19302"}]};
+  var constraints = {"optional": [{"DtlsSrtpKeyAgreement": true}]}; 
+  return new RTCPeerConnection(pc_config, constraints);
+}
+
+function preparePeerConnection(myToken, token, onaddstream) {
+  
+  // Once the RTCPeerConnection is connected, share the
+  // ice candidate (network information)
+  var onicecandidate = function(evt) {
+    if (!evt.candidate){
+      return;
+    } 
+    var msg = {"from": myToken,
+               "type": "icecandidate",
+               "candidate": evt.candidate.candidate,
+               "sdpMLineIndex": evt.candidate.sdpMLineIndex,
+               "sdpMid": evt.candidate.sdpMid};
+    sendSignal([token], msg);
+  };
+  
+  var pc = newRTCPeerConnection();
+  pc.onicecandidate = onicecandidate;
+  pc.onaddstream = function(evt){ onaddstream(token, evt); };
+  g_RTCPeerConnections[token] = pc;
+  return pc;
+}
+
+function createSignalChannel(callback) {
+  var source = new EventSource("/webrtc/signal/sender");
+  callback(source, myToken);
+  // var myTokenListener = function(evt) {
+  //   var msg = JSON.parse(evt.data);
+  //   console.log(msg);
+
+  //   // call `callback` with fixed source and token for testing
+  //   callback(source, myToken);
+  //   source.removeEventListener("message", myTokenListener,false);
+  // }
+  // source.addEventListener("message", myTokenListener, false);
+  return source;
+}
+
+
+function playVideo(video) {
+  setTimeout(function(){ video.play() }, 1000);
+}
+
+// David, main entry point
+//
+function getLocalMedia(callback) {
+  mediaConstraints = {video: true, audio: true};
+
+  function getUserMediaSuccess(localMediaStream) {
+    window.localMediaStream = localMediaStream;
+    var video = document.querySelector("#localvideo");
+    video.muted = true; 
+    video.src = window.URL.createObjectURL(localMediaStream);
+    playVideo(video);
+    
+    callback(localMediaStream);
+  }
+  function getUserMediaError(error){
+    console.log("navigator.getUserMedia error: ", error);
+    callback(null);
+  }
+  navigator.getUserMedia(mediaConstraints, getUserMediaSuccess, getUserMediaError);
+}
+
+// Main code start frome here...
+// 
+getLocalMedia(function(localMediaStream){
+  createSignalChannel(
+  function(source, myToken) {
+    var onMessage = function(evt){
+      rtcSignalHandler(localMediaStream, myToken, evt);
+    };
+    source.onmessage = onMessage;
+    source.addEventListener("message", onMessage);
+    console.log("source: ", source);
+    window.onbeforeunload = function(e){
+      postHTTP("/webrtc/signal/leave_source",
+               {"token": myToken},
+               function(data){ console.log(data); },
+               false 
+               );
+    };
+  }); 
+}); 
+
+</script>
+
+</body>
+</html>
