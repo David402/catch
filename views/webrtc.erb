@@ -2,7 +2,7 @@
 <head>
 	<title>WebRTC</title>
 	
-	<script src="static/lib/util.js"></script>
+	<script src="/utils.js"></script>
 	
 	<style>
 	video {
@@ -36,6 +36,8 @@ var controllerData = {"Room":"rncLompg"};
 console.log("controllerData", controllerData);
 var room = controllerData["Room"];
 
+// David, send signal/message to server
+//
 function sendSignal(destinations, message) {
   var body = JSON.stringify(message);
   var data = {"destinations": destinations, "body": body}
@@ -70,7 +72,8 @@ function preparePeerConnection(myToken, token, onaddstream) {
   return pc;
 }
 
-
+// David, main RTC handler for all RTC events
+//
 function rtcSignalHandler(localMediaStream, myToken, evt) {
   var msg = JSON.parse(evt.data);
   console.log(msg);
@@ -139,7 +142,8 @@ function playVideo(video) {
   setTimeout(function(){ video.play() }, 1000);
 }
 
-
+// David, main entry point
+//
 function getLocalMedia(callback) {
   mediaConstraints = {video: true, audio: true};
 
@@ -164,6 +168,8 @@ function genVideoId(token) {
 }
 
 
+// David, not use in 'Catch'
+//
 function onAddRemoteStream(token, evt){
   var remotevideo = document.createElement("video");
   remotevideo.id = genVideoId(token);
@@ -177,6 +183,8 @@ function onAddRemoteStream(token, evt){
   localvideo.parentNode.insertBefore(remotevideo, localvideo);
 };
 
+// David, may be used to handle remote transmitter hangup
+//
 function onRemoteHangup(token) {
   var remotevideo = document.querySelector("#" + genVideoId(token));
   if (remotevideo) {
