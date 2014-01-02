@@ -34,10 +34,10 @@ if (navigator.mozGetUserMedia) {
   RTCPeerConnection = webkitRTCPeerConnection;
 }
 
-var myToken = "1111";
 var controllerData = {"Room":"rncLompg"};
 console.log("controllerData", controllerData);
 var room = controllerData["Room"];
+var isChrome = !!navigator.webkitGetUserMedia;
 
 // David, send signal/message to server
 //
@@ -55,8 +55,26 @@ function sendSignal(destinations, message) {
 //
 var g_RTCPeerConnections = {};
 
+var STUN = {
+    url: isChrome 
+       ? 'stun:stun.l.google.com:19302' 
+       : 'stun:23.21.150.121'
+};
+
+var TURN_UDP = {
+    url: 'turn:192.158.29.39:3478?transport=udp',
+    credential: 'JZEOEt2V3Qb0y27GRntt2u2PAYA=',
+    username: '28224511:1379330808'
+};
+
+var TURN_TCP = {
+    url: 'turn:192.158.29.39:3478?transport=tcp',
+    credential: 'JZEOEt2V3Qb0y27GRntt2u2PAYA=',
+    username: '28224511:1379330808'
+    }
+
 function newRTCPeerConnection() {
-  var pc_config = {"iceServers": [{"url": "stun:stun.l.google.com:19302"}]};
+  var pc_config = {"iceServers": [STUN, TURN_UDP, TURN_TCP]};
   var constraints = {"optional": [{"DtlsSrtpKeyAgreement": true}]}; 
   return new RTCPeerConnection(pc_config, constraints);
 }
@@ -170,34 +188,66 @@ function onRemoteHangup(token) {
   }
 }
 
-function createSignalChannel() {
+function createSignalChannel(callback) {
   var source = new EventSource("/webrtc/signal/receiver");
-  var onMessage = function(evt){
-      rtcSignalHandler(myToken, evt);
-  };
-  source.onmessage = onMessage;
-  source.addEventListener("message", onMessage);
-  window.onbeforeunload = function(e){
+  
+  var myTokenListener = function(evt) {
+    var msg = JSON.parse(evt.data);
+    console.log("myTokenListener: ", msg);
+
+    if (msg.type == "token") {
+      var my_token = msg.token;
+
+      source.removeEventListener("message", myTokenListener, false);
+      console.log("my token: ", my_token);
+
+      var onMessage = function(evt){
+        rtcSignalHandler(my_token, evt);
+      };
+      source.onmessage = onMessage;
+      source.addEventListener("message", onMessage);
+
+      callback(my_token)
+      
+    } else {
+      console.log("Unknown message: ", msg);
+    }
+
+    source.removeEventListener("message", myTokenListener,false);
+    window.onbeforeunload = function(e){
     postHTTP("/webrtc/signal/leave_source",
-             {"token": myToken},
+             {"token": my_token},
              function(data){ console.log(data); },
              false 
              );
+    }
   };
+  source.addEventListener("message", myTokenListener, false);
+  // source.onmessage = onMessage;
+  // source.addEventListener("message", onMessage);
   return source;
 }
 
 function requestVideo() {
 
-  // create signal channel
-  createSignalChannel();
+  
+}
+
+// Main code start from here...
+//
+// Request video
+// create signal channel
+// 
+createSignalChannel(function(my_token) {
+
+  console.log("createSignalChannel callback: my_token - ", my_token)
 
   var senderToken = "1234";
   // create 'offer' for requesting remote stream
   var pc = g_RTCPeerConnections[senderToken];
     
   if (!pc) {
-    pc = preparePeerConnection(myToken, senderToken, onAddRemoteStream);
+    pc = preparePeerConnection(my_token, senderToken, onAddRemoteStream);
   }
   // pc.setRemoteDescription(new RTCSessionDescription(msg.sessionDescription));
   var offerSuccessCallback = function(sessionDescription) {
@@ -207,7 +257,7 @@ function requestVideo() {
     pc.setLocalDescription(sessionDescription,
                            function(evt){},
                            function(err){ console.log(err); });
-    var msg = {"from": myToken,
+    var msg = {"from": my_token,
                "type": "offer",
                "sessionDescription": sessionDescription};
     sendSignal([senderToken], msg);
@@ -218,11 +268,7 @@ function requestVideo() {
   pc.createOffer(offerSuccessCallback,
                  function(err){ console.log(err); },
                  sdpc);
-}
-
-// Main code start from here...
-//
-requestVideo();
+});
 
 </script>
 

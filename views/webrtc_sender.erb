@@ -34,10 +34,10 @@ if (navigator.mozGetUserMedia) {
   RTCPeerConnection = webkitRTCPeerConnection;
 }
 
-var myToken = "1234";
 var controllerData = {"Room":"rncLompg"};
 console.log("controllerData", controllerData);
 var room = controllerData["Room"];
+var isChrome = !!navigator.webkitGetUserMedia;
 
 // David, send signal/message to server
 //
@@ -111,8 +111,26 @@ function rtcSignalHandler(localMediaStream, myToken, evt) {
 //
 var g_RTCPeerConnections = {};
 
+var STUN = {
+    url: isChrome 
+       ? 'stun:stun.l.google.com:19302' 
+       : 'stun:23.21.150.121'
+};
+
+var TURN_UDP = {
+    url: 'turn:192.158.29.39:3478?transport=udp',
+    credential: 'JZEOEt2V3Qb0y27GRntt2u2PAYA=',
+    username: '28224511:1379330808'
+};
+
+var TURN_TCP = {
+    url: 'turn:192.158.29.39:3478?transport=tcp',
+    credential: 'JZEOEt2V3Qb0y27GRntt2u2PAYA=',
+    username: '28224511:1379330808'
+    }
+
 function newRTCPeerConnection() {
-  var pc_config = {"iceServers": [{"url": "stun:stun.l.google.com:19302"}]};
+  var pc_config = {"iceServers": [STUN, TURN_UDP, TURN_TCP]};
   var constraints = {"optional": [{"DtlsSrtpKeyAgreement": true}]}; 
   return new RTCPeerConnection(pc_config, constraints);
 }
@@ -142,16 +160,26 @@ function preparePeerConnection(myToken, token, onaddstream) {
 
 function createSignalChannel(callback) {
   var source = new EventSource("/webrtc/signal/sender");
-  callback(source, myToken);
-  // var myTokenListener = function(evt) {
-  //   var msg = JSON.parse(evt.data);
-  //   console.log(msg);
+  // callback(source, myToken);
+  var myTokenListener = function(evt) {
+    var msg = JSON.parse(evt.data);
+    console.log(msg);
 
-  //   // call `callback` with fixed source and token for testing
-  //   callback(source, myToken);
-  //   source.removeEventListener("message", myTokenListener,false);
-  // }
-  // source.addEventListener("message", myTokenListener, false);
+    if (msg.type == "token") {
+      var myToken = msg.token;
+      
+      source.removeEventListener("message", myTokenListener, false);
+      console.log("my token: ", myToken);
+
+      callback(source, myToken);
+
+    } else {
+      console.log("Unknown message: ", msg);
+    }
+    
+    source.removeEventListener("message", myTokenListener,false);
+  }
+  source.addEventListener("message", myTokenListener, false);
   return source;
 }
 

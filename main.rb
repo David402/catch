@@ -8,6 +8,8 @@
 require 'rubygems'
 require 'sinatra'
 
+require 'securerandom'
+
 require 'json'
 
 #require 'eventmachine'
@@ -40,26 +42,26 @@ get '/webrtc/receiver' do
 end
 
 
-get '/webrtc/signal/source' do
-	puts "receive event on /webrtc/signal/source"
+# get '/webrtc/signal/source' do
+# 	puts "receive event on /webrtc/signal/source"
 
-	content_type "text/event-stream"
+# 	content_type "text/event-stream"
 
-	stream :keep_open do |out|
-		#EventMachine::PeriodicTimer.new(20) { out << "data: \n\n" } # added
-		# while true do
-		# 	# out << "custom: my_msg_type\n"
-		# 	msg = { hello: 'world' }
-		# 	out << "data: #{JSON.dump(msg)}\n\n"
-		# 	sleep(3)
-		# end
-    	settings.connections << out
-    	puts "connections count: #{settings.connections.count}" # added
-    	msg = { hello: 'world'}
-    	out << "data: #{JSON.dump(msg)}"
-    	out.callback { puts 'closed'; settings.connections.delete(out) } # modified
-  	end
-end
+# 	stream :keep_open do |out|
+# 		#EventMachine::PeriodicTimer.new(20) { out << "data: \n\n" } # added
+# 		# while true do
+# 		# 	# out << "custom: my_msg_type\n"
+# 		# 	msg = { hello: 'world' }
+# 		# 	out << "data: #{JSON.dump(msg)}\n\n"
+# 		# 	sleep(3)
+# 		# end
+#     	settings.connections << out
+#     	puts "connections count: #{settings.connections.count}" # added
+#     	msg = { hello: 'world'}
+#     	out << "data: #{JSON.dump(msg)}"
+#     	out.callback { puts 'closed'; settings.connections.delete(out) } # modified
+#   	end
+# end
 
 get '/webrtc/signal/sender' do
 	puts "receive event on /webrtc/signal/sender"
@@ -67,20 +69,26 @@ get '/webrtc/signal/sender' do
 	content_type "text/event-stream"
 
 	stream do |out|
-    	settings.connections["1234"] = out
+
+		# Generate UUID as a token for user
+		# token = SecureRandom.uuid
+		token = "1234"
+
+		# Store the stream in hash for later reference
+    	settings.connections[token] = out
+
+    	# Print connection debug info
     	printConnectionsInfo;
 
-    	while true do
+    	# Return token info
+    	msg = { type: "token", token: token }
+    	out << "data: #{JSON.dump(msg)}\n\n"
+
+    	begin
 			msg = { hello: 'world' }
 			out << "data: #{JSON.dump(msg)}\n\n"
 			sleep(3)
-    	end
-
-   #  	out.callback { 
-			# puts 'closed'; 
-			# settings.connections.delete("1234");
-			# printConnectionsInfo;
-   #  	}
+    	end until out.closed?
   	end
 end
 
@@ -90,14 +98,25 @@ get '/webrtc/signal/receiver' do
 	content_type "text/event-stream"
 
 	stream :keep_open do |out|
-    	settings.connections["1111"] = out
+
+		# Generate UUID as a token for user
+		token = SecureRandom.uuid
+
+		# Store the stream in hash for later reference
+    	settings.connections[token] = out
+
+    	# Print connection debug info
     	printConnectionsInfo;
 
-    	while true do
+    	# Return token info
+    	msg = { type: "token", token: token }
+    	out << "data: #{JSON.dump(msg)}\n\n"
+
+    	begin
 			msg = { hello: 'world' }
 			out << "data: #{JSON.dump(msg)}\n\n"
 			sleep(3)
-    	end
+    	end until out.closed?
 
    #  	out.callback { 
 			# puts 'closed'; 
@@ -137,15 +156,32 @@ post '/webrtc/signal/transmitter' do
 	puts "signal: #{signal}"
 
 	dests.each do |dest|
-		out = settings.connections[dest];
-		# out << "data: #{JSON.dump(signal)}\n\n"
-		out << "data: #{signal}\n\n"
+		if settings.connections.has_key? dest
+			out = settings.connections[dest];
+			if out.closed?
+				settings.connections.delete dest
+			else
+				out << "data: #{signal}\n\n"
+			end
+		end
 	end
 	
 end
 
-get '/webrtc/signal/leave_source' do
+post '/webrtc/signal/leave_source' do
 	puts "receive event on /webrtc/signal/leave_source"
+	puts "user (#{params[:token]}) left"
+
+	token = params[:token]
+
+	if settings.connections.has_key? token
+		
+		stream = settings.connections[token]
+		stream.close
+		settings.connections.delete token
+	end
+
+	printConnectionsInfo;
 end
 
 # You can see all your app specific information this way.
